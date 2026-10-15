@@ -323,7 +323,27 @@ export class Addresses {
                     `Token inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
                 );
             }
-            const { data: decryptedToken, verificationStatus } = await this.cryptoProxy.decryptMessage({
+            // Diagnostic: dump the imported user key structure — key packet version,
+            // subkey algorithms, and curve OIDs — to see how the encryption subkey is parsed.
+            try {
+                for (const [index, userPrivateKey] of userPrimaryPrivateKeys.entries()) {
+                    const keyInfo = await this.cryptoProxy.getKeyInfo({
+                        armoredKey: await this.cryptoProxy.exportPrivateKey({
+                            privateKey: userPrivateKey,
+                            format: 'armored',
+                            passphrase: null,
+                        }),
+                    });
+                    this.logger.info(
+                        `User key[${index}] info: fingerprint=${keyInfo.fingerprint}, keyIDs=${keyInfo.keyIDs.join(',')}`,
+                    );
+                }
+            } catch (keyInfoError: unknown) {
+                this.logger.warn(
+                    `User key info inspection failed: ${keyInfoError instanceof Error ? keyInfoError.message : String(keyInfoError)}`,
+                );
+            }
+const { data: decryptedToken, verificationStatus } = await this.cryptoProxy.decryptMessage({
                 armoredMessage: key?.Token || '',
                 armoredSignature: key?.Signature || '',
                 decryptionKeys: userPrimaryPrivateKeys,
