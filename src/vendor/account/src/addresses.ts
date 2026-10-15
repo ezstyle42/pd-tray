@@ -309,6 +309,20 @@ export class Addresses {
                 return promise;
             }
 
+            // Diagnostic: inspect the token's PKESK packet to see which key
+            // it is actually encrypted to. Uses the crypto proxy's low-level
+            // message parsing through the same OpenPGP build the SDK uses.
+            try {
+                const armoredToken = key?.Token || '';
+                const tokenInfo = await this.cryptoProxy.getMessageInfo({ armoredMessage: armoredToken });
+                this.logger.info(
+                    `Token info: encryptionKeyIDs=${tokenInfo.encryptionKeyIDs.join(',')}, signingKeyIDs=${tokenInfo.signingKeyIDs.join(',')}`,
+                );
+            } catch (inspectError: unknown) {
+                this.logger.warn(
+                    `Token inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
+                );
+            }
             const { data: decryptedToken, verificationStatus } = await this.cryptoProxy.decryptMessage({
                 armoredMessage: key?.Token || '',
                 armoredSignature: key?.Signature || '',
