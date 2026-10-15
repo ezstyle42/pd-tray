@@ -174,11 +174,17 @@ app.whenReady().then(async () => {
     createTray();
     createWindow();
 
-    ipcMain.handle('app:getState', () => ({
-        settings,
-        loggedIn: driveCore?.auth.isLoggedIn() ?? false,
-        activity: activityBuffer,
-    }));
+    ipcMain.handle('app:getState', async () => {
+        await ensureCore().catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            pushActivity({ time: Date.now(), direction: 'error', message: `Init failed: ${message}` });
+        });
+        return {
+            settings,
+            loggedIn: driveCore?.auth.isLoggedIn() ?? false,
+            activity: activityBuffer,
+        };
+    });
 
     ipcMain.handle('auth:login', async () => {
         const core = await ensureCore();
@@ -210,18 +216,24 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('drive:listFolders', async () => {
-        const core = await ensureCore();
-        if (!core.auth.isLoggedIn()) {
-            return { ok: false, error: 'Not signed in' };
+        try {
+            const core = await ensureCore();
+            if (!core.auth.isLoggedIn()) {
+                return { ok: false, error: 'Not signed in' };
+            }
+            const root = await core.sdk.getMyFilesRootFolder();
+            return { ok: true, root: serializeNode(root) };
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error('[drive:listFolders]', error);
+            return { ok: false, error: message };
         }
-        const root = await core.sdk.getMyFilesRootFolder();
-        return { ok: true, root: serializeNode(root) };
     });
 
     ipcMain.handle('drive:listChildren', async (_event, nodeUid: string) => {
-        const core = await ensureCore();
         const children: unknown[] = [];
         try {
+            const core = await ensureCore();
             const parent = await core.sdk.getNode(nodeUid);
             for await (const maybeChild of core.sdk.iterateFolderChildren(parent)) {
                 if ('missingUid' in maybeChild) {
@@ -231,6 +243,7 @@ app.whenReady().then(async () => {
             }
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
+            console.error('[drive:listChildren]', error);
             return { ok: false, error: message };
         }
         return { ok: true, children };

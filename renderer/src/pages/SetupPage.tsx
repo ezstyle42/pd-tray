@@ -29,9 +29,11 @@ export function SetupPage({
     const [currentFolders, setCurrentFolders] = useState<RemoteFolder[]>([]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     async function browse(uid?: string) {
         setBrowsing(true);
+        setError(null);
         setSaved(false);
         try {
             let rootResult;
@@ -41,15 +43,25 @@ export function SetupPage({
                     setCurrentFolders((res.children ?? []).filter((c: any) => c.type === 'folder'));
                     return;
                 }
+                setError(res.error ?? 'Failed to list folders');
+                return;
             }
             rootResult = await window.pdSync.listFolders();
-            if (rootResult.ok && rootResult.root) {
+            if (!rootResult.ok) {
+                setError(rootResult.error ?? 'Failed to load Drive folders');
+                return;
+            }
+            if (rootResult.root) {
                 setPathStack([{ uid: rootResult.root.uid, name: rootResult.root.name }]);
                 const res = await window.pdSync.listChildren(rootResult.root.uid);
                 if (res.ok) {
                     setCurrentFolders((res.children ?? []).filter((c: any) => c.type === 'folder'));
+                } else {
+                    setError(res.error ?? 'Failed to list folders');
                 }
             }
+        } catch (e: any) {
+            setError(e?.message ?? String(e));
         } finally {
             setBrowsing(false);
         }
@@ -76,6 +88,7 @@ export function SetupPage({
 
     async function save() {
         setSaving(true);
+        setError(null);
         try {
             const result = await window.pdSync.saveSettings({
                 localFolder: localFolder || null,
@@ -97,6 +110,8 @@ export function SetupPage({
                     closeToTray,
                 });
             }
+        } catch (e: any) {
+            setError(e?.message ?? String(e));
         } finally {
             setSaving(false);
         }
@@ -137,6 +152,9 @@ export function SetupPage({
                         )}
                     </div>
                 </div>
+                {error && (
+                    <p style={{ color: 'var(--error)', fontSize: 13, whiteSpace: 'pre-wrap' }}>{error}</p>
+                )}
                 {browsing && pathStack.length > 0 && (
                     <div>
                         <div className="breadcrumb">
@@ -153,7 +171,14 @@ export function SetupPage({
                                 <li key={f.uid}>
                                     <a onClick={() => void enterFolder(f)}>📁 {f.name}</a>
                                     <span className="spacer" />
-                                    <button className="secondary" onClick={() => { setRemote(f); setBrowsing(false); setSaved(false); }}>
+                                    <button
+                                        className="secondary"
+                                        onClick={() => {
+                                            setRemote(f);
+                                            setBrowsing(false);
+                                            setSaved(false);
+                                        }}
+                                    >
                                         Select this folder
                                     </button>
                                 </li>
@@ -176,17 +201,37 @@ export function SetupPage({
                 <div className="field">
                     <label>Options</label>
                     <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, color: 'var(--text)' }}>
-                        <input type="checkbox" checked={syncDownloads} onChange={(e) => { setSyncDownloads(e.target.checked); setSaved(false); }} />
+                        <input
+                            type="checkbox"
+                            checked={syncDownloads}
+                            onChange={(e) => {
+                                setSyncDownloads(e.target.checked);
+                                setSaved(false);
+                            }}
+                        />
                         Download changes made in Proton Drive to this computer
                     </label>
                     <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, color: 'var(--text)' }}>
-                        <input type="checkbox" checked={closeToTray} onChange={(e) => { setCloseToTray(e.target.checked); setSaved(false); }} />
+                        <input
+                            type="checkbox"
+                            checked={closeToTray}
+                            onChange={(e) => {
+                                setCloseToTray(e.target.checked);
+                                setSaved(false);
+                            }}
+                        />
                         Keep running in the system tray when the window is closed
                     </label>
                 </div>
                 <div className="field">
                     <label>When both sides changed the same file</label>
-                    <select value={conflictStrategy} onChange={(e) => { setConflictStrategy(e.target.value as any); setSaved(false); }}>
+                    <select
+                        value={conflictStrategy}
+                        onChange={(e) => {
+                            setConflictStrategy(e.target.value as any);
+                            setSaved(false);
+                        }}
+                    >
                         <option value="newest">Keep the newest version, overwrite the other</option>
                         <option value="rename">Keep both files (add “conflict” copy)</option>
                     </select>
