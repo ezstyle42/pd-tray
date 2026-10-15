@@ -7,6 +7,7 @@ import { SyncEngine, type SyncActivity, type SyncStatus } from '../sync/engine';
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let driveCore: DriveCore | null = null;
+let driveCorePromise: Promise<DriveCore> | null = null;
 let syncEngine: SyncEngine | null = null;
 let settings: AppSettings = loadSettings();
 let quitting = false;
@@ -36,6 +37,12 @@ function createWindow(): void {
             event.preventDefault();
             mainWindow?.hide();
         }
+    });
+    mainWindow.webContents.on('console-message', (_event, _level, message) => {
+        console.log(`[renderer] ${message}`);
+    });
+    mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+        console.error(`[renderer] failed to load ${url}: ${code} ${desc}`);
     });
     const devUrl = process.env.PD_TRAY_SYNC_DEV_URL;
     if (devUrl) {
@@ -90,7 +97,11 @@ async function triggerFullSync(): Promise<void> {
     if (!syncEngine || !settings.localFolder || !settings.remoteFolderUid) {
         return;
     }
-    await syncEngine.handleRemoteEvent({ type: 'fast_forward' as any, treeEventScopeId: 'core', eventId: 'manual' } as any);
+    await syncEngine.handleRemoteEvent({
+        type: 'fast_forward' as never,
+        treeEventScopeId: 'core',
+        eventId: 'manual',
+    } as never);
 }
 
 function send(channel: string, payload: unknown): void {
@@ -108,26 +119,43 @@ function pushActivity(activity: SyncActivity): void {
 }
 
 async function ensureCore(): Promise<DriveCore> {
-    if (!driveCore) {
-        driveCore = await initDriveCore(async (event) => {
-            await syncEngine?.handleRemoteEvent(event);
-        });
-        syncEngine = new SyncEngine(driveCore.sdk);
+    if (driveCore) {
+        return driveCore;
     }
-    return driveCore;
+    if (!driveCorePromise) {
+        driveCorePromise = initDriveCore()
+            .then((core) => {
+                driveCore = core;
+                return core;
+            })
+            .catch((error: unknown) => {
+                driveCorePromise = null;
+                throw error;
+            });
+    }
+    return driveCorePromise;
 }
 
 async function startSyncIfConfigured(): Promise<void> {
     const core = await ensureCore();
     if (!core.auth.isLoggedIn()) {
+        send('status', { state: 'idle', lastSync: null, queue: 0 });
         return;
+    }
+    if (!syncEngine) {
+        syncEngine = new SyncEngine(core.sdk);
+        await core.setEventListener(async (event) => {
+            await syncEngine?.handleRemoteEvent(event);
+        });
+    } else {
+        syncEngine.setSdk(core.sdk);
     }
     if (!settings.localFolder || !settings.remoteFolderUid) {
         send('status', { state: 'idle', lastSync: null, queue: 0 });
         return;
     }
     try {
-        await syncEngine!.start({
+        await syncEngine.start({
             localFolder: settings.localFolder,
             remoteFolderUid: settings.remoteFolderUid,
             syncDownloads: settings.syncDownloads,
@@ -142,7 +170,6 @@ async function startSyncIfConfigured(): Promise<void> {
     }
 }
 
-
 app.whenReady().then(async () => {
     createTray();
     createWindow();
@@ -156,18 +183,21 @@ app.whenReady().then(async () => {
     ipcMain.handle('auth:login', async () => {
         const core = await ensureCore();
         return new Promise((resolve) => {
-            void core.auth.authViaWeb((signInUrl: string) => {
-                send('auth:signInUrl', signInUrl);
-                void shell.openExternal(signInUrl);
-            }).then(async () => {
-                await startSyncIfConfigured();
-                send('auth:loggedIn', true);
-                resolve({ ok: true });
-            }).catch((error: unknown) => {
-                const message = error instanceof Error ? error.message : String(error);
-                send('auth:error', message);
-                resolve({ ok: false, error: message });
-            });
+            void core.auth
+                .authViaWeb((signInUrl: string) => {
+                    send('auth:signInUrl', signInUrl);
+                    void shell.openExternal(signInUrl);
+                })
+                .then(async () => {
+                    await startSyncIfConfigured();
+                    send('auth:loggedIn', true);
+                    resolve({ ok: true });
+                })
+                .catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    send('auth:error', message);
+                    resolve({ ok: false, error: message });
+                });
         });
     });
 

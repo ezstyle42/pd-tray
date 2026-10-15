@@ -27,6 +27,7 @@ export interface DriveCore {
     sdk: ProtonDriveClient;
     credentials: CredentialsStore;
     session: SessionCredentialsAdapter;
+    setEventListener(onEvent: (event: DriveEvent) => Promise<void>): Promise<void>;
     dispose(): Promise<void>;
 }
 
@@ -107,13 +108,6 @@ class SessionCredentialsAdapter {
         this.userKeyPassword = undefined;
         await this.store.remove();
         this.emitChange();
-    }
-
-    async getUserKeyPasswordOrThrow(): Promise<string> {
-        if (!this.userKeyPassword) {
-            throw new Error('Not signed in');
-        }
-        return this.userKeyPassword;
     }
 
     private async persist(): Promise<void> {
@@ -205,13 +199,22 @@ class LatestEventIdProvider {
     }
 }
 
-export async function initDriveCore(onEvent?: (event: DriveEvent) => Promise<void>): Promise<DriveCore> {
-    const cryptoApi = new CryptoApi();
-    CryptoApi.init({});
-    CryptoProxy.setEndpoint(cryptoApi, async (endpoint) => {
-        endpoint.clearKeyStore();
-    });
-    const openPGPCryptoModule = new OpenPGPCryptoWithCryptoProxy(CryptoProxy);
+let cryptoInitialized = false;
+
+function initOpenPGPCryptoModule(): OpenPGPCryptoWithCryptoProxy {
+    if (!cryptoInitialized) {
+        const cryptoApi = new CryptoApi();
+        CryptoApi.init({});
+        CryptoProxy.setEndpoint(cryptoApi, async (endpoint) => {
+            endpoint.clearKeyStore();
+        });
+        cryptoInitialized = true;
+    }
+    return new OpenPGPCryptoWithCryptoProxy(CryptoProxy);
+}
+
+export async function initDriveCore(): Promise<DriveCore> {
+    const openPGPCryptoModule = initOpenPGPCryptoModule();
 
     const credentialsStore = new FileCredentialsStore();
     const session = new SessionCredentialsAdapter(credentialsStore);
@@ -254,30 +257,33 @@ export async function initDriveCore(onEvent?: (event: DriveEvent) => Promise<voi
     } as any);
 
     let subscription: EventSubscription | null = null;
-    if (onEvent) {
-        subscription = await sdk.subscribeToDriveEvents(async (event: DriveEvent) => {
-            if (
-                event.type === DriveEventType.NodeCreated ||
-                event.type === DriveEventType.NodeUpdated ||
-                event.type === DriveEventType.NodeDeleted ||
-                event.type === DriveEventType.FastForward ||
-                event.type === DriveEventType.TreeRefresh ||
-                event.type === DriveEventType.TreeRemove
-            ) {
-                await onEvent(event);
-            }
-        });
-    }
-
-    return {
+    const core: DriveCore = {
         auth,
         sdk,
         credentials: credentialsStore,
         session,
+        setEventListener: async (onEvent) => {
+            subscription?.dispose();
+            subscription = await sdk.subscribeToDriveEvents(async (event: DriveEvent) => {
+                const relevant =
+                    event.type === DriveEventType.NodeCreated ||
+                    event.type === DriveEventType.NodeUpdated ||
+                    event.type === DriveEventType.NodeDeleted ||
+                    event.type === DriveEventType.FastForward ||
+                    event.type === DriveEventType.TreeRefresh ||
+                    event.type === DriveEventType.TreeRemove;
+                if (relevant) {
+                    await onEvent(event);
+                }
+            });
+        },
         dispose: async () => {
             subscription?.dispose();
+            subscription = null;
         },
     };
+
+    return core;
 }
 
 export type { Credentials };
