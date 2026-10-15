@@ -217,11 +217,19 @@ export class Addresses {
                     userPrimaryPrivateKeys.push(userPrimaryPrivateKey);
                     userPrimaryPublicKeys.push(userPrimaryPublicKey);
                 } catch (error) {
-                    this.logger.error(`Error importing user key: ${JSON.stringify(userKey)}`, error);
+                    this.logger.error(
+                        `Error importing user key ${userKey?.ID} (active=${userKey?.Primary}): ${
+                            error instanceof Error ? error.message : String(error)
+                        }`,
+                        error,
+                    );
                 }
             }
 
             const addresses = await this.accountApi.addresses();
+            this.logger.info(
+                `Loaded ${addresses.Addresses?.length ?? 0} address(es), ${userPrimaryPrivateKeys.length} usable user key(s)`,
+            );
             const primaryAddress = addresses.Addresses?.at(0);
             const primaryAddressPrimaryKey = primaryAddress?.Keys?.at(0);
 
@@ -302,6 +310,13 @@ export class Addresses {
                 armoredSignature: key?.Signature || '',
                 decryptionKeys: userPrimaryPrivateKeys,
                 verificationKeys: userPrimaryPublicKeys,
+            }).catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                this.logger.error(
+                    `Address key token decryption failed (keyId=${keyId}, primaryKeys=${userPrimaryPrivateKeys.length}, tokenLen=${key?.Token?.length ?? 0}, signatureLen=${key?.Signature?.length ?? 0}): ${message}`,
+                    error,
+                );
+                throw error;
             });
 
             if (verificationStatus !== VERIFICATION_STATUS.SIGNED_AND_VALID) {

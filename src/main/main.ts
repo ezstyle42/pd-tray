@@ -171,6 +171,9 @@ async function startSyncIfConfigured(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+    if (process.env.PD_TRAY_SYNC_DEBUG) {
+        process.env.NODE_ENV = 'development';
+    }
     createTray();
     createWindow();
 
