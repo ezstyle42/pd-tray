@@ -40,7 +40,7 @@ const result = await esbuild.build({
     plugins: [importMetaUrlFix],
     alias: {
         'proton-drive-sdk-account': path.join(root, 'src/vendor/account/src/index.ts'),
-        openpgp: path.join(root, 'node_modules/openpgp/dist/node/openpgp.min.cjs'),
+        openpgp: path.join(root, 'node_modules/@protontech/crypto/node_modules/openpgp/dist/node/openpgp.min.cjs'),
     },
 });
 
