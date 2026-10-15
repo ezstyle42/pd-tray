@@ -65,6 +65,36 @@ async function main() {
     } else {
         console.log('tweetnacl not resolvable at top level; skipping cross-check');
     }
+    // 5. JWK import path (what OpenPGP ECDH actually uses): import d+x,
+    //    derive, and compare against tweetnacl scalarMult.
+    const nacl2 = require('tweetnacl');
+    const kpA = nacl2.box.keyPair();
+    const kpB = nacl2.box.keyPair();
+    const b64u = (buf) => Buffer.from(buf).toString('base64url');
+    const privKey = await subtle.importKey(
+        'jwk',
+        { kty: 'OKP', crv: 'X25519', x: b64u(kpA.publicKey), d: b64u(kpA.secretKey), ext: true },
+        { name: 'X25519' },
+        false,
+        ['deriveBits'],
+    );
+    const pubKey = await subtle.importKey(
+        'jwk',
+        { kty: 'OKP', crv: 'X25519', x: b64u(kpB.publicKey), ext: true },
+        { name: 'X25519' },
+        false,
+        [],
+    );
+    const viaJwk = Buffer.from(await subtle.deriveBits({ name: 'X25519', public: pubKey }, privKey, 256));
+    const viaNacl = Buffer.from(nacl2.scalarMult(kpA.secretKey, kpB.publicKey));
+    console.log('JWK-import secret :', viaJwk.toString('hex'));
+    console.log('tweetnacl secret  :', viaNacl.toString('hex'));
+    const jwkMatch = viaJwk.equals(viaNacl);
+    console.log('JWK import matches tweetnacl:', jwkMatch);
+    if (!jwkMatch) {
+        console.error('X25519 JWK-IMPORT IS BROKEN in this runtime (WebCrypto != tweetnacl)');
+        process.exit(1);
+    }
     console.log('X25519 LOOKS HEALTHY in this runtime');
 }
 
