@@ -197,6 +197,9 @@ export class Addresses {
             const users = await this.accountApi.users();
 
             const userKeys = users.User?.Keys;
+            this.logger.info(
+                `Loading user data: ${userKeys?.length ?? 0} user key(s) [${userKeys?.map((k) => k.ID).join(', ')}]`,
+            );
 
             const userPrimaryPrivateKeys: PrivateKeyReference[] = [];
             const userPrimaryPublicKeys: PublicKeyReference[] = [];
@@ -216,6 +219,7 @@ export class Addresses {
 
                     userPrimaryPrivateKeys.push(userPrimaryPrivateKey);
                     userPrimaryPublicKeys.push(userPrimaryPublicKey);
+                    this.logger.info(`Imported user key ${userKey?.ID} (active=${userKey?.Primary})`);
                 } catch (error) {
                     this.logger.error(
                         `Error importing user key ${userKey?.ID} (active=${userKey?.Primary}): ${
