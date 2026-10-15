@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": [
+      "ES2024",
+      "DOM"
+    ],
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": false,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "proton-drive-sdk-account": [
+        "./src/vendor/account/src/index.ts"
+      ]
+    },
+    "baseUrl": ".",
+    "types": [
+      "@protontech/global-types",
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
