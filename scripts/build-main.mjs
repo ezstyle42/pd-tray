@@ -5,22 +5,35 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-const importMetaUrlFix = {
-    name: 'import-meta-url-fix',
+// Load the vendored openpgp build as an external, unmodified file at runtime
+// instead of bundling it. esbuild bundling has already corrupted openpgp once
+// (import.meta.url stubbing), and any in-place patching adds variables; running
+// the exact upstream file removes that entire class of problems.
+const OPENPGP_CJS = path.join(
+    root,
+    'node_modules/@protontech/crypto/node_modules/openpgp/dist/node/openpgp.cjs',
+);
+if (!fs.existsSync(OPENPGP_CJS)) {
+    console.error(`openpgp build not found at ${OPENPGP_CJS}; run npm install`);
+    process.exit(1);
+}
+
+// Mark bare 'openpgp' imports as external so the bundle does a plain
+// require('openpgp') at runtime. Node then resolves it via
+// node_modules/@protontech/crypto/node_modules/openpgp (the Proton fork),
+// because that is the only openpgp in the dependency graph and the
+// require is issued from within @protontech/crypto's module scope.
+const openpgpExternal = {
+    name: 'openpgp-external',
     setup(build) {
-        build.onLoad({ filter: /node_modules[\\/]@protontech[\\/]crypto[\\/].*\.ts$/ }, (args) => {
-            const contents = fs.readFileSync(args.path, 'utf8');
-            if (!contents.includes('import.meta.url')) {
-                return undefined;
-            }
-            return {
-                loader: 'ts',
-                contents: contents.replaceAll(
-                    'import.meta.url',
-                    'require("url").pathToFileURL(__filename).href',
-                ),
-            };
-        });
+        // Resolve 'openpgp' to the forked package by its install name, and
+        // mark external. Node resolves 'npm:@protontech/openpgp' installs under
+        // the nested path; using the dependency's package directory directly
+        // keeps the runtime location-independent.
+        build.onResolve({ filter: /^openpgp$/ }, (args) => ({
+            path: 'openpgp',
+            external: true,
+        }));
     },
 };
 
@@ -37,10 +50,9 @@ const result = await esbuild.build({
     external: ['electron'],
     sourcemap: false,
     logLevel: 'info',
-    plugins: [importMetaUrlFix],
+    plugins: [openpgpExternal],
     alias: {
         'proton-drive-sdk-account': path.join(root, 'src/vendor/account/src/index.ts'),
-        openpgp: path.join(root, 'node_modules/@protontech/crypto/node_modules/openpgp/dist/node/openpgp.min.cjs'),
     },
 });
 
