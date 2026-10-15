@@ -178,13 +178,57 @@ class AccountAdapter implements ProtonDriveAccount {
     }
 }
 
-class NullLogger {
-    debug(...args: any[]): void {}
-    info(...args: any[]): void {}
-    warn(...args: any[]): void {}
-    error(...args: any[]): void {}
-    trace(...args: any[]): void {}
-    fatal(...args: any[]): void {}
+function formatArg(arg: unknown): string {
+    if (arg instanceof Error) {
+        return `${arg.name}: ${arg.message}`;
+    }
+    if (typeof arg === 'string') {
+        return arg;
+    }
+    try {
+        return JSON.stringify(arg);
+    } catch {
+        return String(arg);
+    }
+}
+
+class ConsoleLogger {
+    constructor(private readonly name: string) {}
+
+    private log(level: string, message: string, args: unknown[]): void {
+        const line = `[${this.name}] ${message}`;
+        const extra = args.map(formatArg).join(' ');
+        const full = extra ? `${line} ${extra}` : line;
+        if (level === 'error') {
+            console.error(full);
+        } else {
+            console.log(full);
+        }
+    }
+
+    debug(message: string, ...args: unknown[]): void {
+        this.log('debug', message, args);
+    }
+
+    info(message: string, ...args: unknown[]): void {
+        this.log('info', message, args);
+    }
+
+    warn(message: string, ...args: unknown[]): void {
+        this.log('warn', message, args);
+    }
+
+    error(message: string, ...args: unknown[]): void {
+        this.log('error', message, args);
+    }
+
+    trace(message: string, ...args: unknown[]): void {
+        this.log('trace', message, args);
+    }
+
+    fatal(message: string, ...args: unknown[]): void {
+        this.log('fatal', message, args);
+    }
 }
 
 class LatestEventIdProvider {
@@ -220,7 +264,8 @@ export async function initDriveCore(): Promise<DriveCore> {
     const session = new SessionCredentialsAdapter(credentialsStore);
     await session.load();
 
-    const logger = new NullLogger() as unknown as Logger;
+    const logger = new ConsoleLogger('drive-core') as unknown as Logger;
+    const accountLogger = new ConsoleLogger('account') as unknown as import('proton-drive-sdk-account').Logger;
 
     const apiClient = new ApiClient({
         baseUrl: BASE_URL,
@@ -235,7 +280,7 @@ export async function initDriveCore(): Promise<DriveCore> {
         credentials: session,
         cryptoProxy: CryptoProxy,
         srpApi: { computeKeyPassword, generateKeySalt, getRandomSrpVerifier, getSrp },
-        logger,
+        logger: accountLogger,
         accountUrl: ACCOUNT_URL,
     } as any);
 

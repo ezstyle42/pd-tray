@@ -89,7 +89,10 @@ export class Addresses {
         }
 
         if (keys.length === 0) {
-            throw new Error(`No private key found`, { cause: errors });
+            const causes = errors
+                .map((error) => (error instanceof Error ? error.message : String(error)))
+                .join('; ');
+            throw new Error(`No private key found: ${causes}`, { cause: errors });
         }
 
         return {
