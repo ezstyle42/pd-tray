@@ -219,7 +219,6 @@ export class Addresses {
 
                     userPrimaryPrivateKeys.push(userPrimaryPrivateKey);
                     userPrimaryPublicKeys.push(userPrimaryPublicKey);
-                    this.logger.info(`Imported user key ${userKey?.ID} (active=${userKey?.Primary})`);
                 } catch (error) {
                     this.logger.error(
                         `Error importing user key ${userKey?.ID} (active=${userKey?.Primary}): ${
@@ -231,9 +230,6 @@ export class Addresses {
             }
 
             const addresses = await this.accountApi.addresses();
-            this.logger.info(
-                `Loaded ${addresses.Addresses?.length ?? 0} address(es), ${userPrimaryPrivateKeys.length} usable user key(s)`,
-            );
             const primaryAddress = addresses.Addresses?.at(0);
             const primaryAddressPrimaryKey = primaryAddress?.Keys?.at(0);
 
@@ -309,91 +305,13 @@ export class Addresses {
                 return promise;
             }
 
-            // Diagnostic: inspect the token's PKESK packet to see which key
-            // it is actually encrypted to. Uses the crypto proxy's low-level
-            // message parsing through the same OpenPGP build the SDK uses.
-            try {
-                const armoredToken = key?.Token || '';
-                const tokenInfo = await this.cryptoProxy.getMessageInfo({ armoredMessage: armoredToken });
-                this.logger.info(
-                    `Token info: encryptionKeyIDs=${tokenInfo.encryptionKeyIDs.join(',')}, signingKeyIDs=${tokenInfo.signingKeyIDs.join(',')}`,
-                );
-            } catch (inspectError: unknown) {
-                this.logger.warn(
-                    `Token inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
-                );
-            }
-            // Diagnostic: dump the token's PKESK packets and the user key's subkey
-            // KDF parameters, then — importantly — run a RAW openpgp decryption of
-            // the token, bypassing the crypto proxy endpoint (key store, references,
-            // the Api class). If the raw decrypt succeeds where the proxy fails,
-            // the bug is in the proxy wiring; if it fails too, it is the data.
-            try {
-                const openpgpModule = (await import('openpgp')) as any;
-                const opgp = openpgpModule.default ?? openpgpModule;
-                const tokenMessage = await opgp.readMessage({ armoredMessage: key?.Token || '' });
-                for (const pkesk of tokenMessage.packets.filterByTag(opgp.enums.packet.publicKeyEncryptedSessionKey)) {
-                    this.logger.info(
-                        `PKESK: version=${pkesk.version}, algo=${pkesk.publicKeyAlgorithm}, keyID=${pkesk.publicKeyID?.toHex()}`,
-                    );
-                }
-                const armoredUserKey = await this.cryptoProxy.exportPrivateKey({
-                    privateKey: userPrimaryPrivateKeys[0],
-                    format: 'armored',
-                    passphrase: null,
-                });
-                const privateKeyObj = await opgp.readPrivateKey({ armoredKey: armoredUserKey });
-                for (const subkey of privateKeyObj.subkeys ?? []) {
-                    this.logger.info(
-                        `Subkey: algo=${subkey.keyPacket.algorithm}, fingerprint=${subkey.getFingerprint()}`,
-                    );
-                    const kdfParams = subkey.keyPacket.publicParams?.kdfParams;
-                    if (kdfParams) {
-                        this.logger.info(`Subkey KDF: hash=${kdfParams.hash}, cipher=${kdfParams.cipher}`);
-                    }
-                }
-                const freshMessage = await opgp.readMessage({ armoredMessage: key?.Token || '' });
-                const rawResult = await opgp.decrypt({
-                    message: freshMessage,
-                    decryptionKeys: [privateKeyObj],
-                });
-                this.logger.info(
-                    `RAW openpgp decrypt: SUCCESS (token length ${String(rawResult.data).length})`,
-                );
-            } catch (inspectError: unknown) {
-                this.logger.warn(
-                    `PKESK/subkey inspection or raw decrypt failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
-                );
-            }
-            try {
-                for (const [index, userPrivateKey] of userPrimaryPrivateKeys.entries()) {
-                    const keyInfo = await this.cryptoProxy.getKeyInfo({
-                        armoredKey: await this.cryptoProxy.exportPrivateKey({
-                            privateKey: userPrivateKey,
-                            format: 'armored',
-                            passphrase: null,
-                        }),
-                    });
-                    this.logger.info(
-                        `User key[${index}] info: fingerprint=${keyInfo.fingerprint}, keyIDs=${keyInfo.keyIDs.join(',')}`,
-                    );
-                }
-            } catch (keyInfoError: unknown) {
-                this.logger.warn(
-                    `User key info inspection failed: ${keyInfoError instanceof Error ? keyInfoError.message : String(keyInfoError)}`,
-                );
-            }
 const { data: decryptedToken, verificationStatus } = await this.cryptoProxy.decryptMessage({
                 armoredMessage: key?.Token || '',
                 armoredSignature: key?.Signature || '',
                 decryptionKeys: userPrimaryPrivateKeys,
                 verificationKeys: userPrimaryPublicKeys,
             }).catch((error: unknown) => {
-                const message = error instanceof Error ? error.message : String(error);
-                this.logger.error(
-                    `Address key token decryption failed (keyId=${keyId}, primaryKeys=${userPrimaryPrivateKeys.length}, tokenLen=${key?.Token?.length ?? 0}, signatureLen=${key?.Signature?.length ?? 0}): ${message}`,
-                    error,
-                );
+                this.logger.error(`Failed to decrypt address key token ${keyId}`, error);
                 throw error;
             });
 

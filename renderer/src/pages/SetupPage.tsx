@@ -31,22 +31,23 @@ export function SetupPage({
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const [loading, setLoading] = useState(false);
+
     async function browse(uid?: string) {
-        setBrowsing(true);
+        setLoading(true);
         setError(null);
         setSaved(false);
         try {
-            let rootResult;
             if (uid) {
                 const res = await window.pdSync.listChildren(uid);
                 if (res.ok) {
                     setCurrentFolders((res.children ?? []).filter((c: any) => c.type === 'folder'));
-                    return;
+                } else {
+                    setError(res.error ?? 'Failed to list folders');
                 }
-                setError(res.error ?? 'Failed to list folders');
                 return;
             }
-            rootResult = await window.pdSync.listFolders();
+            const rootResult = await window.pdSync.listFolders();
             if (!rootResult.ok) {
                 setError(rootResult.error ?? 'Failed to load Drive folders');
                 return;
@@ -56,6 +57,7 @@ export function SetupPage({
                 const res = await window.pdSync.listChildren(rootResult.root.uid);
                 if (res.ok) {
                     setCurrentFolders((res.children ?? []).filter((c: any) => c.type === 'folder'));
+                    setBrowsing(true);
                 } else {
                     setError(res.error ?? 'Failed to list folders');
                 }
@@ -63,7 +65,7 @@ export function SetupPage({
         } catch (e: any) {
             setError(e?.message ?? String(e));
         } finally {
-            setBrowsing(false);
+            setLoading(false);
         }
     }
 
@@ -136,8 +138,8 @@ export function SetupPage({
                     <label>Proton Drive folder</label>
                     <div className="path-row">
                         <span className="path-value">{remote ? `/${remote.name}` : 'Not selected'}</span>
-                        <button className="secondary" disabled={browsing} onClick={() => void browse()}>
-                            {browsing ? 'Loading…' : 'Choose…'}
+                        <button className="secondary" disabled={loading} onClick={() => void browse()}>
+                            {loading ? 'Loading…' : 'Choose…'}
                         </button>
                         {remote && (
                             <button
