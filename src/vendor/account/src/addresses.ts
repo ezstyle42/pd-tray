@@ -323,14 +323,16 @@ export class Addresses {
                     `Token inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
                 );
             }
-            // Diagnostic: dump the PKESK packet of the token (version, algorithm,
-            // key IDs) and the user key's subkey KDF parameters, to detect a
-            // cipher/hash/KDF mismatch between server and client.
+            // Diagnostic: dump the token's PKESK packets and the user key's subkey
+            // KDF parameters, then — importantly — run a RAW openpgp decryption of
+            // the token, bypassing the crypto proxy endpoint (key store, references,
+            // the Api class). If the raw decrypt succeeds where the proxy fails,
+            // the bug is in the proxy wiring; if it fails too, it is the data.
             try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const { readMessage, readKey, enums } = (await import('openpgp')) as any;
-                const tokenMessage = await readMessage({ armoredMessage: key?.Token || '' });
-                for (const pkesk of tokenMessage.packets.filterByTag(enums.packet.publicKeyEncryptedSessionKey)) {
+                const openpgpModule = (await import('openpgp')) as any;
+                const opgp = openpgpModule.default ?? openpgpModule;
+                const tokenMessage = await opgp.readMessage({ armoredMessage: key?.Token || '' });
+                for (const pkesk of tokenMessage.packets.filterByTag(opgp.enums.packet.publicKeyEncryptedSessionKey)) {
                     this.logger.info(
                         `PKESK: version=${pkesk.version}, algo=${pkesk.publicKeyAlgorithm}, keyID=${pkesk.publicKeyID?.toHex()}`,
                     );
@@ -340,21 +342,27 @@ export class Addresses {
                     format: 'armored',
                     passphrase: null,
                 });
-                const userKey = await readKey({ armoredKey: armoredUserKey });
-                for (const subkey of userKey.subkeys ?? []) {
+                const privateKeyObj = await opgp.readPrivateKey({ armoredKey: armoredUserKey });
+                for (const subkey of privateKeyObj.subkeys ?? []) {
                     this.logger.info(
                         `Subkey: algo=${subkey.keyPacket.algorithm}, fingerprint=${subkey.getFingerprint()}`,
                     );
-                    if (subkey.keyPacket.publicParams?.kdfParams) {
-                        const kdf = subkey.keyPacket.publicParams.kdfParams;
-                        this.logger.info(
-                            `Subkey KDF: hash=${kdf.hash}, cipher=${kdf.cipher}`,
-                        );
+                    const kdfParams = subkey.keyPacket.publicParams?.kdfParams;
+                    if (kdfParams) {
+                        this.logger.info(`Subkey KDF: hash=${kdfParams.hash}, cipher=${kdfParams.cipher}`);
                     }
                 }
+                const freshMessage = await opgp.readMessage({ armoredMessage: key?.Token || '' });
+                const rawResult = await opgp.decrypt({
+                    message: freshMessage,
+                    decryptionKeys: [privateKeyObj],
+                });
+                this.logger.info(
+                    `RAW openpgp decrypt: SUCCESS (token length ${String(rawResult.data).length})`,
+                );
             } catch (inspectError: unknown) {
                 this.logger.warn(
-                    `PKESK/subkey inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
+                    `PKESK/subkey inspection or raw decrypt failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
                 );
             }
             try {
