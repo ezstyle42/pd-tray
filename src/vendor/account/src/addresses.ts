@@ -323,8 +323,40 @@ export class Addresses {
                     `Token inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
                 );
             }
-            // Diagnostic: dump the imported user key structure — key packet version,
-            // subkey algorithms, and curve OIDs — to see how the encryption subkey is parsed.
+            // Diagnostic: dump the PKESK packet of the token (version, algorithm,
+            // key IDs) and the user key's subkey KDF parameters, to detect a
+            // cipher/hash/KDF mismatch between server and client.
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { readMessage, readKey, enums } = (await import('openpgp')) as any;
+                const tokenMessage = await readMessage({ armoredMessage: key?.Token || '' });
+                for (const pkesk of tokenMessage.packets.filterByTag(enums.packet.publicKeyEncryptedSessionKey)) {
+                    this.logger.info(
+                        `PKESK: version=${pkesk.version}, algo=${pkesk.publicKeyAlgorithm}, keyID=${pkesk.publicKeyID?.toHex()}`,
+                    );
+                }
+                const armoredUserKey = await this.cryptoProxy.exportPrivateKey({
+                    privateKey: userPrimaryPrivateKeys[0],
+                    format: 'armored',
+                    passphrase: null,
+                });
+                const userKey = await readKey({ armoredKey: armoredUserKey });
+                for (const subkey of userKey.subkeys ?? []) {
+                    this.logger.info(
+                        `Subkey: algo=${subkey.keyPacket.algorithm}, fingerprint=${subkey.getFingerprint()}`,
+                    );
+                    if (subkey.keyPacket.publicParams?.kdfParams) {
+                        const kdf = subkey.keyPacket.publicParams.kdfParams;
+                        this.logger.info(
+                            `Subkey KDF: hash=${kdf.hash}, cipher=${kdf.cipher}`,
+                        );
+                    }
+                }
+            } catch (inspectError: unknown) {
+                this.logger.warn(
+                    `PKESK/subkey inspection failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`,
+                );
+            }
             try {
                 for (const [index, userPrivateKey] of userPrimaryPrivateKeys.entries()) {
                     const keyInfo = await this.cryptoProxy.getKeyInfo({
@@ -357,7 +389,8 @@ const { data: decryptedToken, verificationStatus } = await this.cryptoProxy.decr
                 throw error;
             });
 
-            if (verificationStatus !== VERIFICATION_STATUS.SIGNED_AND_VALID) {
+            const resolvedVerificationStatus = await verificationStatus;
+            if (resolvedVerificationStatus !== VERIFICATION_STATUS.SIGNED_AND_VALID) {
                 throw new Error('Failed to verify address key');
             }
 
